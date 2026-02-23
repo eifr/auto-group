@@ -1,11 +1,11 @@
 import { getAdapter, getAllAdapters } from '../src/adapters';
 import { TabManager } from '../src/core/TabManager';
 import { storage, getSettings, getAdapterConfig } from '../src/core/Storage';
-import { 
-  MASTER_ALARM_NAME, 
-  ADAPTER_ALARM_PREFIX, 
-  onAlarm, 
-  updatePolling 
+import {
+  MASTER_ALARM_NAME,
+  ADAPTER_ALARM_PREFIX,
+  onAlarm,
+  updatePolling
 } from '../src/core/Scheduler';
 
 async function runAdapterSync(adapterName: string): Promise<void> {
@@ -30,13 +30,13 @@ async function runAdapterSync(adapterName: string): Promise<void> {
     console.log(`[Auto Groups] Fetching items for ${adapterName}...`);
     const items = await adapter.fetchItems();
     console.log(`[Auto Groups] Got ${items.length} items`);
-    
+
     const syncItems = items.map(item => ({
       id: adapter.getItemId(item),
       url: adapter.getItemUrl(item),
       title: adapter.getItemTitle(item),
     }));
-    
+
     await tabManager.syncGroup(syncItems);
     console.log(`[Auto Groups] Synced ${syncItems.length} items for ${adapterName}`);
   } catch (error) {
@@ -46,13 +46,8 @@ async function runAdapterSync(adapterName: string): Promise<void> {
 
 async function syncAllAdapters(): Promise<void> {
   const settings = await getSettings();
-  
+
   if (settings.fetchMode === 'together') {
-    if (!settings.masterEnabled) {
-      console.log('[Auto Groups] Master disabled, skipping sync');
-      return;
-    }
-    
     const adapters = getAllAdapters();
     for (const adapter of adapters) {
       await runAdapterSync(adapter.name);
@@ -67,11 +62,9 @@ async function syncAllAdapters(): Promise<void> {
 
 async function syncAdapter(adapterName: string): Promise<void> {
   const settings = await getSettings();
-  
+
   if (settings.fetchMode === 'together') {
-    if (settings.masterEnabled) {
-      await runAdapterSync(adapterName);
-    }
+    await runAdapterSync(adapterName);
   } else {
     await runAdapterSync(adapterName);
   }
@@ -86,7 +79,7 @@ export default defineBackground(() => {
 
   onAlarm(async (alarm) => {
     console.log(`[Auto Groups] Alarm triggered: ${alarm.name}`);
-    
+
     if (alarm.name === MASTER_ALARM_NAME) {
       await syncAllAdapters();
     } else if (alarm.name.startsWith(ADAPTER_ALARM_PREFIX)) {
@@ -117,11 +110,11 @@ export default defineBackground(() => {
         .catch(err => sendResponse({ success: false, error: err.message }));
       return true;
     }
-    
+
     if (message.type === 'GET_STATUS') {
       getSettings().then(settings => {
         const installed = Object.keys(settings.installedAdapters);
-        
+
         const adaptersWithMeta: Record<string, any> = {};
         for (const name of installed) {
           const adapter = getAdapter(name);
@@ -130,8 +123,8 @@ export default defineBackground(() => {
             groupTitle: adapter?.groupTitle || name,
           };
         }
-        
-        sendResponse({ 
+
+        sendResponse({
           fetchMode: settings.fetchMode,
           masterEnabled: settings.masterEnabled,
           globalPollingInterval: settings.globalPollingInterval,

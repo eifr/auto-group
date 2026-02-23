@@ -15,7 +15,7 @@ export interface ExtensionSettings {
 
 const defaults: ExtensionSettings = {
   fetchMode: 'together',
-  masterEnabled: false,
+  masterEnabled: true,
   globalPollingInterval: 5,
   installedAdapters: {},
   groupMapping: {},
