@@ -1,3 +1,220 @@
+import { getAdapter, getAllAdapters } from '../src/adapters';
+import { TabManager } from '../src/core/TabManager';
+import { storage, getSettings, getAdapterConfig } from '../src/core/Storage';
+import { 
+  MASTER_ALARM_NAME, 
+  ADAPTER_ALARM_PREFIX, 
+  onAlarm, 
+  updatePolling 
+} from '../src/core/Scheduler';
+
+async function runAdapterSync(adapterName: string): Promise<void> {
+  const adapter = getAdapter(adapterName);
+  if (!adapter) {
+    console.error(`Adapter not found: ${adapterName}`);
+    return;
+  }
+
+  const config = await getAdapterConfig(adapterName);
+  if (!config || !config.enabled) {
+    console.log(`Adapter ${adapterName} is disabled, skipping`);
+    return;
+  }
+
+  const tabManager = new TabManager({
+    groupTitle: adapter.groupTitle,
+    adapterName: adapter.name,
+  });
+
+  try {
+    console.log(`[Auto Groups] Fetching items for ${adapterName}...`);
+    const items = await adapter.fetchItems();
+    console.log(`[Auto Groups] Got ${items.length} items`);
+    
+    const syncItems = items.map(item => ({
+      id: adapter.getItemId(item),
+      url: adapter.getItemUrl(item),
+      title: adapter.getItemTitle(item),
+    }));
+    
+    await tabManager.syncGroup(syncItems);
+    console.log(`[Auto Groups] Synced ${syncItems.length} items for ${adapterName}`);
+  } catch (error) {
+    console.error(`[Auto Groups] Error syncing ${adapterName}:`, error);
+  }
+}
+
+async function syncAllAdapters(): Promise<void> {
+  const settings = await getSettings();
+  
+  if (settings.fetchMode === 'together') {
+    if (!settings.masterEnabled) {
+      console.log('[Auto Groups] Master disabled, skipping sync');
+      return;
+    }
+    
+    const adapters = getAllAdapters();
+    for (const adapter of adapters) {
+      await runAdapterSync(adapter.name);
+    }
+  } else {
+    const installedAdapters = Object.keys(settings.installedAdapters);
+    for (const adapterName of installedAdapters) {
+      await runAdapterSync(adapterName);
+    }
+  }
+}
+
+async function syncAdapter(adapterName: string): Promise<void> {
+  const settings = await getSettings();
+  
+  if (settings.fetchMode === 'together') {
+    if (settings.masterEnabled) {
+      await runAdapterSync(adapterName);
+    }
+  } else {
+    await runAdapterSync(adapterName);
+  }
+}
+
 export default defineBackground(() => {
-  console.log('Hello background!', { id: browser.runtime.id });
+  console.log('Auto Groups extension started');
+
+  browser.runtime.onInstalled.addListener(async () => {
+    console.log('Extension installed');
+  });
+
+  onAlarm(async (alarm) => {
+    console.log(`[Auto Groups] Alarm triggered: ${alarm.name}`);
+    
+    if (alarm.name === MASTER_ALARM_NAME) {
+      await syncAllAdapters();
+    } else if (alarm.name.startsWith(ADAPTER_ALARM_PREFIX)) {
+      const adapterName = alarm.name.replace(ADAPTER_ALARM_PREFIX, '');
+      await syncAdapter(adapterName);
+    }
+  });
+
+  browser.storage.onChanged.addListener(async (changes, area) => {
+    if (area === 'local') {
+      if (changes.fetchMode || changes.masterEnabled || changes.globalPollingInterval || changes.installedAdapters) {
+        await updatePolling();
+      }
+    }
+  });
+
+  browser.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message.type === 'SYNC_NOW') {
+      console.log('[Auto Groups] Manual sync triggered');
+      syncAllAdapters().then(() => sendResponse({ success: true }))
+        .catch(err => sendResponse({ success: false, error: err.message }));
+      return true;
+    }
+
+    if (message.type === 'SYNC_ADAPTER') {
+      console.log(`[Auto Groups] Manual sync for ${message.adapterName}`);
+      syncAdapter(message.adapterName).then(() => sendResponse({ success: true }))
+        .catch(err => sendResponse({ success: false, error: err.message }));
+      return true;
+    }
+    
+    if (message.type === 'GET_STATUS') {
+      getSettings().then(settings => {
+        const installed = Object.keys(settings.installedAdapters);
+        
+        const adaptersWithMeta: Record<string, any> = {};
+        for (const name of installed) {
+          const adapter = getAdapter(name);
+          adaptersWithMeta[name] = {
+            ...settings.installedAdapters[name],
+            groupTitle: adapter?.groupTitle || name,
+          };
+        }
+        
+        sendResponse({ 
+          fetchMode: settings.fetchMode,
+          masterEnabled: settings.masterEnabled,
+          globalPollingInterval: settings.globalPollingInterval,
+          installedAdapters: adaptersWithMeta,
+          installedList: installed,
+        });
+      });
+      return true;
+    }
+
+    if (message.type === 'UPDATE_SETTINGS') {
+      const { fetchMode, masterEnabled, globalPollingInterval } = message;
+      storage.setMultiple({
+        fetchMode,
+        masterEnabled,
+        globalPollingInterval,
+      }).then(async () => {
+        await updatePolling();
+        sendResponse({ success: true });
+      });
+      return true;
+    }
+
+    if (message.type === 'UPDATE_ADAPTER_CONFIG') {
+      const { adapterName, enabled, pollingInterval, config } = message;
+      console.log('[Auto Groups] UPDATE_ADAPTER_CONFIG:', { adapterName, enabled, pollingInterval, config });
+      getAdapterConfig(adapterName).then(currentConfig => {
+        if (currentConfig) {
+          storage.get('installedAdapters').then(adapters => {
+            const newConfig = {
+              enabled: enabled !== undefined ? enabled : currentConfig.enabled,
+              pollingInterval: pollingInterval !== undefined ? pollingInterval : currentConfig.pollingInterval,
+              config: { ...currentConfig.config, ...config },
+            };
+            console.log('[Auto Groups] New config:', newConfig);
+            storage.set('installedAdapters', {
+              ...adapters,
+              [adapterName]: newConfig,
+            }).then(async () => {
+              await updatePolling();
+              sendResponse({ success: true });
+            });
+          });
+        } else {
+          sendResponse({ success: false, error: 'Adapter not found' });
+        }
+      });
+      return true;
+    }
+
+    if (message.type === 'INSTALL_ADAPTER') {
+      const adapter = getAdapter(message.adapterName);
+      if (adapter) {
+        adapter.install().then(async () => {
+          await updatePolling();
+          sendResponse({ success: true });
+        });
+      } else {
+        sendResponse({ success: false, error: 'Adapter not found' });
+      }
+      return true;
+    }
+
+    if (message.type === 'UNINSTALL_ADAPTER') {
+      const adapter = getAdapter(message.adapterName);
+      if (adapter) {
+        adapter.uninstall().then(() => {
+          storage.get('installedAdapters').then(adapters => {
+            delete adapters[message.adapterName];
+            storage.set('installedAdapters', adapters).then(async () => {
+              await updatePolling();
+              sendResponse({ success: true });
+            });
+          });
+        });
+      } else {
+        sendResponse({ success: false, error: 'Adapter not found' });
+      }
+      return true;
+    }
+  });
+
+  (async () => {
+    await updatePolling();
+  })();
 });
