@@ -1,7 +1,10 @@
 import { defineConfig } from 'wxt';
 
 export default defineConfig({
-  modules: ['@wxt-dev/module-react'],
+  autoIcons: {
+    baseIconPath: "assets/icon.svg"
+  },
+  modules: ['@wxt-dev/module-react', '@wxt-dev/auto-icons'],
   manifest: {
     name: 'Auto Groups',
     description: 'Automatically manage tab groups based on external APIs like GitHub PRs',
@@ -11,8 +14,11 @@ export default defineConfig({
       gecko: {
         id: 'auto-groups@extension.dev',
         strict_min_version: '138.0',
+        // @ts-ignore - WXT doesn't support this field yet
+        data_collection_permissions: {
+          required: ['none'],
+        },
       },
     },
-    data_collection_permissions: [1],
   },
 });
