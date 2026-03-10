@@ -10,6 +10,7 @@ export default defineConfig({
     description: 'Automatically manage tab groups based on external APIs like GitHub PRs',
     permissions: ['tabs', 'tabGroups', 'storage', 'alarms'],
     host_permissions: ['https://api.github.com/'],
+    optional_host_permissions: ['https://*/*'],
     browser_specific_settings: {
       gecko: {
         id: 'auto-groups@extension.dev',

@@ -54,11 +54,14 @@ function App() {
   const handleInstall = async (adapterName: string) => {
     setSaving(true);
     try {
-      await browser.runtime.sendMessage({ type: 'INSTALL_ADAPTER', adapterName });
+      const response = await browser.runtime.sendMessage({ type: 'INSTALL_ADAPTER', adapterName });
+      if (response && response.success === false) {
+        throw new Error(response.error || 'Failed to install adapter');
+      }
       await loadStatus();
       setSuccess('Adapter installed!');
-    } catch (err) {
-      setError('Failed to install adapter');
+    } catch (err: any) {
+      setError(err.message || 'Failed to install adapter');
     } finally {
       setSaving(false);
       setTimeout(() => setSuccess(null), 3000);
@@ -68,11 +71,14 @@ function App() {
   const handleUninstall = async (adapterName: string) => {
     setSaving(true);
     try {
-      await browser.runtime.sendMessage({ type: 'UNINSTALL_ADAPTER', adapterName });
+      const response = await browser.runtime.sendMessage({ type: 'UNINSTALL_ADAPTER', adapterName });
+      if (response && response.success === false) {
+        throw new Error(response.error || 'Failed to uninstall adapter');
+      }
       await loadStatus();
       setSuccess('Adapter uninstalled');
-    } catch (err) {
-      setError('Failed to uninstall adapter');
+    } catch (err: any) {
+      setError(err.message || 'Failed to uninstall adapter');
     } finally {
       setSaving(false);
       setTimeout(() => setSuccess(null), 3000);
@@ -81,57 +87,102 @@ function App() {
 
   const handleToggleAdapter = async (adapterName: string, enabled: boolean) => {
     try {
-      await browser.runtime.sendMessage({ 
+      const response = await browser.runtime.sendMessage({ 
         type: 'UPDATE_ADAPTER_CONFIG', 
         adapterName, 
         enabled 
       });
+      if (response && response.success === false) {
+        throw new Error(response.error || 'Failed to update adapter');
+      }
       await loadStatus();
-    } catch (err) {
-      setError('Failed to update adapter');
+    } catch (err: any) {
+      setError(err.message || 'Failed to update adapter');
     }
   };
 
   const handleAdapterIntervalChange = async (adapterName: string, interval: number) => {
     try {
-      await browser.runtime.sendMessage({ 
+      const response = await browser.runtime.sendMessage({ 
         type: 'UPDATE_ADAPTER_CONFIG', 
         adapterName, 
         pollingInterval: interval 
       });
+      if (response && response.success === false) {
+        throw new Error(response.error || 'Failed to update interval');
+      }
       await loadStatus();
-    } catch (err) {
-      setError('Failed to update interval');
+    } catch (err: any) {
+      setError(err.message || 'Failed to update interval');
     }
   };
 
-  const handleSaveToken = async (adapterName: string, token: string) => {
+  const handleSaveConfig = async (adapterName: string, token: string, rawHost: string): Promise<boolean> => {
     try {
-      await browser.runtime.sendMessage({ 
+      let host = rawHost.trim();
+      if (host) {
+        if (!/^https?:\/\//i.test(host)) {
+          host = `https://${host}`;
+        }
+        host = host.replace(/\/api\/v3\/?$/i, '');
+        host = host.replace(/\/+$/, '');
+      }
+
+      // If it's a custom host, request permissions
+      if (host && host !== 'https://api.github.com') {
+        // Remove trailing slash for permission request just in case, but origins usually need it
+        const origin = `${host}/*`;
+        
+        try {
+          const granted = await browser.permissions.request({
+            origins: [origin]
+          });
+          
+          if (!granted) {
+            setError('Permission denied for custom host. You must grant permission to access the enterprise URL.');
+            return false;
+          }
+        } catch (permErr: any) {
+          setError(`Invalid host URL or permission error: ${permErr.message || permErr}`);
+          return false;
+        }
+      }
+
+      const response = await browser.runtime.sendMessage({ 
         type: 'UPDATE_ADAPTER_CONFIG', 
         adapterName, 
-        config: { token } 
+        config: { token, host } 
       });
+      
+      if (response && response.success === false) {
+        throw new Error(response.error || 'Background script rejected the update');
+      }
+      
       await loadStatus();
-      setSuccess('Token saved!');
+      setSuccess('Config saved!');
       setTimeout(() => setSuccess(null), 3000);
-    } catch (err) {
-      setError('Failed to save token');
+      return true;
+    } catch (err: any) {
+      setError(err.message || 'Failed to save config');
+      return false;
     }
   };
 
   const handleSettingsUpdate = async (fetchMode: 'together' | 'individual', interval: number) => {
     setSaving(true);
     try {
-      await browser.runtime.sendMessage({ 
+      const response = await browser.runtime.sendMessage({ 
         type: 'UPDATE_SETTINGS', 
         fetchMode, 
         globalPollingInterval: interval 
       });
+      if (response && response.success === false) {
+        throw new Error(response.error || 'Failed to save settings');
+      }
       await loadStatus();
       setSuccess('Settings saved!');
-    } catch (err) {
-      setError('Failed to save settings');
+    } catch (err: any) {
+      setError(err.message || 'Failed to save settings');
     } finally {
       setSaving(false);
       setTimeout(() => setSuccess(null), 3000);
@@ -141,11 +192,14 @@ function App() {
   const handleSyncNow = async () => {
     setSaving(true);
     try {
-      await browser.runtime.sendMessage({ type: 'SYNC_NOW' });
+      const response = await browser.runtime.sendMessage({ type: 'SYNC_NOW' });
+      if (response && response.success === false) {
+        throw new Error(response.error || 'Failed to sync');
+      }
       setSuccess('Sync triggered!');
       await loadStatus();
-    } catch (err) {
-      setError('Failed to sync');
+    } catch (err: any) {
+      setError(err.message || 'Failed to sync');
     } finally {
       setSaving(false);
       setTimeout(() => setSuccess(null), 3000);
@@ -191,7 +245,7 @@ function App() {
           status={status} 
           onToggle={handleToggleAdapter}
           onIntervalChange={handleAdapterIntervalChange}
-          onSaveToken={handleSaveToken}
+          onSaveConfig={handleSaveConfig}
           onUninstall={handleUninstall}
           onSyncNow={handleSyncNow}
           saving={saving}
@@ -202,6 +256,7 @@ function App() {
         <StoreTab 
           installedAdapters={status.installedList}
           onInstall={handleInstall}
+          onConfigure={() => setActiveTab('installed')}
           saving={saving}
         />
       )}
@@ -221,7 +276,7 @@ function InstalledTab({
   status, 
   onToggle, 
   onIntervalChange, 
-  onSaveToken,
+  onSaveConfig,
   onUninstall,
   onSyncNow,
   saving 
@@ -229,12 +284,58 @@ function InstalledTab({
   status: Status;
   onToggle: (name: string, enabled: boolean) => void;
   onIntervalChange: (name: string, interval: number) => void;
-  onSaveToken: (name: string, token: string) => void;
+  onSaveConfig: (name: string, token: string, host: string) => Promise<boolean>;
   onUninstall: (name: string) => void;
   onSyncNow: () => void;
   saving: boolean;
 }) {
-  const [tokenInput, setTokenInput] = useState<Record<string, string>>({});
+  const [tokenInput, setTokenInput] = useState<Record<string, string>>(() => {
+    try {
+      const saved = localStorage.getItem('draftTokenInput');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+  const [hostInput, setHostInput] = useState<Record<string, string>>(() => {
+    try {
+      const saved = localStorage.getItem('draftHostInput');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem('draftTokenInput', JSON.stringify(tokenInput));
+  }, [tokenInput]);
+
+  useEffect(() => {
+    localStorage.setItem('draftHostInput', JSON.stringify(hostInput));
+  }, [hostInput]);
+
+  const handleSaveWrapper = async (name: string, token: string, host: string) => {
+    const success = await onSaveConfig(name, token, host);
+    
+    // Check if permission is already granted to clear drafts immediately
+    // If not, they will be cleared next time the user saves successfully
+    if (success) {
+      if (token) {
+        setTokenInput(prev => {
+          const next = { ...prev };
+          delete next[name];
+          return next;
+        });
+      }
+      if (host && host !== 'https://api.github.com') {
+        setHostInput(prev => {
+          const next = { ...prev };
+          delete next[name];
+          return next;
+        });
+      }
+    }
+  };
 
   const installedList = Object.keys(status.installedAdapters);
 
@@ -274,6 +375,14 @@ function InstalledTab({
 
             {name === 'github' && (
               <div className="form-group">
+                <label>GitHub Host</label>
+                <input
+                  type="text"
+                  placeholder="https://api.github.com"
+                  value={hostInput[name] !== undefined ? hostInput[name] : (adapter.config?.host || '')}
+                  onChange={(e) => setHostInput({ ...hostInput, [name]: e.target.value })}
+                />
+                
                 <label>GitHub Token</label>
                 {adapter.config?.token ? (
                   <div className="token-configured">
@@ -281,7 +390,7 @@ function InstalledTab({
                     <button 
                       className="btn btn-secondary"
                       onClick={() => {
-                        onSaveToken(name, '');
+                        handleSaveWrapper(name, '', hostInput[name] || adapter.config?.host || 'https://api.github.com');
                       }}
                     >
                       Remove Token
@@ -299,13 +408,24 @@ function InstalledTab({
                       className="btn btn-primary"
                       onClick={() => {
                         if (tokenInput[name]) {
-                          onSaveToken(name, tokenInput[name]);
+                          handleSaveWrapper(name, tokenInput[name], hostInput[name] || adapter.config?.host || 'https://api.github.com');
                         }
                       }}
                     >
-                      Save Token
+                      Save Config
                     </button>
                   </>
+                )}
+                {adapter.config?.token && (
+                  <button 
+                    className="btn btn-primary"
+                    style={{ marginTop: '10px' }}
+                    onClick={() => {
+                      handleSaveWrapper(name, adapter.config?.token, hostInput[name] || adapter.config?.host || 'https://api.github.com');
+                    }}
+                  >
+                    Update Host
+                  </button>
                 )}
               </div>
             )}
@@ -336,38 +456,48 @@ function InstalledTab({
 function StoreTab({ 
   installedAdapters, 
   onInstall, 
+  onConfigure,
   saving 
 }: {
   installedAdapters: string[];
   onInstall: (name: string) => void;
+  onConfigure: () => void;
   saving: boolean;
 }) {
-  const availableToInstall = availableAdaptersList.filter(
-    a => !installedAdapters.includes(a.name)
-  );
-
   return (
     <div className="adapter-list">
-      {availableToInstall.map(adapter => (
-        <div key={adapter.name} className="card adapter-card">
-          <div className="adapter-header">
-            <div className="adapter-info">
-              <h3>{adapter.groupTitle}</h3>
-              <p className="info-text">{adapter.description}</p>
+      {availableAdaptersList.map(adapter => {
+        const isInstalled = installedAdapters.includes(adapter.name);
+        return (
+          <div key={adapter.name} className="card adapter-card">
+            <div className="adapter-header">
+              <div className="adapter-info">
+                <h3>{adapter.groupTitle}</h3>
+                <p className="info-text">{adapter.description}</p>
+              </div>
             </div>
+            {isInstalled ? (
+              <button 
+                className="btn btn-secondary"
+                onClick={onConfigure}
+              >
+                Configure
+              </button>
+            ) : (
+              <button 
+                className="btn btn-primary"
+                onClick={() => onInstall(adapter.name)}
+                disabled={saving}
+              >
+                Install
+              </button>
+            )}
           </div>
-          <button 
-            className="btn btn-primary"
-            onClick={() => onInstall(adapter.name)}
-            disabled={saving}
-          >
-            Install
-          </button>
-        </div>
-      ))}
-      {availableToInstall.length === 0 && (
+        );
+      })}
+      {availableAdaptersList.length === 0 && (
         <div className="card">
-          <p className="empty-state">All available adapters are installed!</p>
+          <p className="empty-state">No adapters available.</p>
         </div>
       )}
     </div>

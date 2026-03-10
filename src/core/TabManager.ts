@@ -1,5 +1,6 @@
 import { SyncItem } from '../adapters/types';
 import { storage } from './Storage';
+import { getAdapter } from '../adapters';
 
 const GROUP_COLORS = ['grey', 'blue', 'red', 'yellow', 'green', 'pink', 'purple', 'cyan'] as const;
 
@@ -67,11 +68,13 @@ export class TabManager {
     }
 
     const tabsToAdd: number[] = [];
-    const existingUrls = new Set(managedTabs.map(t => t.url).filter((u): u is string => !!u));
+    const existingItemIds = new Set(
+      managedTabs.map(t => t.url ? this.extractItemId(t.url) : null).filter((id): id is string => !!id)
+    );
 
     for (const item of items) {
-      if (!existingUrls.has(item.url)) {
-        const existingTab = allTabs.find(t => t.url === item.url);
+      if (!existingItemIds.has(item.id)) {
+        const existingTab = allTabs.find(t => t.url && this.extractItemId(t.url) === item.id);
         if (existingTab) {
           tabsToAdd.push(existingTab.id!);
         } else {
@@ -117,6 +120,11 @@ export class TabManager {
   }
 
   private extractItemId(url: string): string | null {
+    const adapter = getAdapter(this.adapterName);
+    if (adapter && adapter.extractItemIdFromUrl) {
+      return adapter.extractItemIdFromUrl(url);
+    }
+
     const match = url.match(/github\.com\/([^\/]+\/[^\/]+)\/pull\/(\d+)/);
     if (match) {
       return `${match[1]}#${match[2]}`;

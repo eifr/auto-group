@@ -9,19 +9,25 @@ function extractRepoFromUrl(repositoryUrl: string): { fullName: string; name: st
   return { fullName: 'unknown', name: 'unknown' };
 }
 
-async function getToken(): Promise<string | null> {
+async function getGithubConfig(): Promise<{ token: string | null; host: string }> {
   const config = await getAdapterConfig('github');
-  return config?.config?.token || null;
+  return {
+    token: config?.config?.token || null,
+    host: config?.config?.host || 'https://api.github.com',
+  };
 }
 
 export async function fetchRequestedPRs(): Promise<PullRequest[]> {
-  const token = await getToken();
+  const { token, host } = await getGithubConfig();
   if (!token) {
     throw new Error('GitHub token not configured');
   }
 
   const query = 'state:open is:pr user-review-requested:@me';
-  const url = `https://api.github.com/search/issues?q=${encodeURIComponent(query)}&sort=updated&per_page=50`;
+  const cleanHost = host.replace(/\/$/, '');
+  const isEnterprise = cleanHost !== 'https://api.github.com' && !cleanHost.includes('api.github.com');
+  const baseUrl = isEnterprise ? `${cleanHost}/api/v3` : cleanHost;
+  const url = `${baseUrl}/search/issues?q=${encodeURIComponent(query)}&sort=updated&per_page=50`;
 
   const response = await fetch(url, {
     headers: {
@@ -46,19 +52,18 @@ export async function fetchRequestedPRs(): Promise<PullRequest[]> {
   return data.items;
 }
 
-export async function saveToken(token: string): Promise<void> {
+export async function saveConfig(token: string, host: string): Promise<void> {
   const config = await getAdapterConfig('github');
   if (config) {
     await setAdapterConfig('github', {
       ...config,
-      config: { ...config.config, token },
+      config: { ...config.config, token, host },
     });
   }
 }
 
-export async function getSavedToken(): Promise<string | null> {
-  const config = await getAdapterConfig('github');
-  return config?.config?.token || null;
+export async function getSavedConfig(): Promise<{ token: string | null; host: string }> {
+  return getGithubConfig();
 }
 
 export const githubAdapter: AdapterWithInstall<PullRequest> = {
@@ -94,6 +99,14 @@ export const githubAdapter: AdapterWithInstall<PullRequest> = {
   getItemTitle(item: PullRequest): string {
     const repo = extractRepoFromUrl(item.repository_url);
     return `${repo.name} #${item.number}: ${item.title}`;
+  },
+
+  extractItemIdFromUrl(url: string): string | null {
+    const match = url.match(/([^\/]+\/[^\/]+)\/pull\/(\d+)/);
+    if (match) {
+      return `${match[1]}#${match[2]}`;
+    }
+    return null;
   },
 
   isItemActive(item: PullRequest): boolean {

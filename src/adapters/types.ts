@@ -39,6 +39,7 @@ export interface Adapter<T = any> {
   getItemUrl(item: T): string;
   getItemId(item: T): string;
   getItemTitle(item: T): string;
+  extractItemIdFromUrl?(url: string): string | null;
   isItemActive?(item: T): boolean;
 }
 
