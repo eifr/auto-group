@@ -85,7 +85,7 @@ export class TabManager {
     }
 
     if (tabsToRemove.length > 0) {
-      await browser.tabs.ungroup(tabsToRemove);
+      await browser.tabs.ungroup(tabsToRemove as [number, ...number[]]);
       await browser.tabs.remove(tabsToRemove);
     }
 
@@ -99,9 +99,9 @@ export class TabManager {
         const currentTabIds = groupTabs.map(t => t.id).filter((id): id is number => id !== undefined);
         if (currentTabIds.length > 0) {
           const allTabIds = [...currentTabIds, ...tabsToAdd];
-          await browser.tabs.group({ tabIds: allTabIds });
+          await browser.tabs.group({ tabIds: allTabIds as [number, ...number[]], groupId: groupId });
         } else {
-          await browser.tabs.group({ tabIds: tabsToAdd as [number, ...number[]] });
+          await browser.tabs.group({ tabIds: tabsToAdd as [number, ...number[]], groupId: groupId });
         }
         await browser.tabGroups.update(groupId, { title: this.groupTitle });
       } else {
@@ -116,7 +116,9 @@ export class TabManager {
       }
     }
 
-    await storage.set('lastSync', Date.now());
+    const lastSync = await storage.get('lastSync');
+    lastSync[this.adapterName] = Date.now();
+    await storage.set('lastSync', lastSync);
   }
 
   private extractItemId(url: string): string | null {
@@ -145,7 +147,7 @@ export class TabManager {
       const tabIds = tabs.map(t => t.id).filter((id): id is number => id !== undefined);
       
       if (tabIds.length > 0) {
-        await browser.tabs.ungroup(tabIds);
+        await browser.tabs.ungroup(tabIds as [number, ...number[]]);
         await browser.tabs.remove(tabIds);
       }
 

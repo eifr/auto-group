@@ -75,6 +75,7 @@ export default defineBackground(() => {
 
   browser.runtime.onInstalled.addListener(async () => {
     console.log('Extension installed');
+    await updatePolling();
   });
 
   onAlarm(async (alarm) => {
@@ -207,7 +208,4 @@ export default defineBackground(() => {
     }
   });
 
-  (async () => {
-    await updatePolling();
-  })();
 });
